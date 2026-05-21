@@ -43,12 +43,74 @@ export class XProvider extends SocialAbstract implements SocialProvider {
     return isTwitterPremium ? 4000 : 200;
   }
 
-  override handleErrors(body: string):
+  override handleErrors(
+    body: string,
+    statusCode?: number
+  ):
     | {
         type: 'refresh-token' | 'bad-body';
         value: string;
       }
     | undefined {
+    console.error(`[X-debug] handleErrors called: statusCode=${statusCode} bodyLen=${body?.length ?? 'n/a'} bodyHead=${(body || '').slice(0, 200)}`);
+    // HTTP-status first — catches the "X token revoked" + "free tier write
+    // restricted" cases that the existing string-matching missed and which
+    // previously fell through to the abstract class's generic "Unknown Error".
+    if (
+      statusCode === 401 ||
+      body.includes('"status":401') ||
+      body.includes('Unauthorized')
+    ) {
+      return {
+        type: 'refresh-token',
+        value:
+          'X token is invalid or revoked (401). Reconnect the X account in Postiz integrations.',
+      };
+    }
+    if (statusCode === 403 || body.includes('"status":403')) {
+      return {
+        type: 'bad-body',
+        value:
+          'X rejected the request (403). Most likely: free-tier API write restrictions (Basic $200/mo required), missing app permissions, or content-policy violation.',
+      };
+    }
+    if (statusCode === 429 || body.includes('Rate limit')) {
+      return {
+        type: 'bad-body',
+        value: 'X rate limit hit. Wait 15 minutes and try again.',
+      };
+    }
+
+    // X's tier-credit system (introduced 2024 with Basic/Pro/Enterprise plans).
+    // Returned when the app's monthly write-credit quota is exhausted.
+    if (
+      body.includes('CreditsDepleted') ||
+      body.includes('/problems/credits')
+    ) {
+      return {
+        type: 'bad-body',
+        value:
+          'X API credits depleted. The X app is out of monthly write quota — upgrade the X developer tier (Free → Basic $200/mo → Pro $5k/mo) or wait for the monthly reset.',
+      };
+    }
+
+    // Generic 4xx fallback — surface the actual X error body instead of
+    // letting it fall through to "Unknown Error" in the abstract class.
+    if (typeof statusCode === 'number' && statusCode >= 400 && statusCode < 500) {
+      // Try to extract a useful field from the X response body.
+      let detail = '';
+      try {
+        const parsed = JSON.parse(body) as { detail?: string; title?: string; message?: string };
+        detail = parsed.detail || parsed.message || parsed.title || '';
+      } catch {
+        detail = body.slice(0, 200);
+      }
+      return {
+        type: 'bad-body',
+        value: `X rejected the request (${statusCode}): ${detail || '(no detail)'}`,
+      };
+    }
+
     if (body.includes('You are not permitted to perform this action')) {
       return {
         type: 'bad-body',

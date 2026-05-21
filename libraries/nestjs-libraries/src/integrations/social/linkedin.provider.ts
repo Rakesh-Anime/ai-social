@@ -46,7 +46,12 @@ export class LinkedinProvider extends SocialAbstract implements SocialProvider {
 
   protected authorUrn(id: string, type: LinkedinAuthorType): string {
     if (type === 'personal') return `urn:li:person:${id}`;
-    if (type === 'showcase') return `urn:li:organizationBrand:${id}`;
+    // Showcase Pages: LinkedIn deprecated the organizationBrand URN type for
+    // authoring in Jan 2024 (only allowed as @-mention now). The same numeric
+    // ID with `urn:li:organization:` URN type still routes correctly to the
+    // showcase page — LinkedIn normalizes the author to organizationBrand on
+    // response display. This works for both /rest/posts and /rest/images.
+    if (type === 'showcase') return `urn:li:organization:${id}`;
     return `urn:li:organization:${id}`;
   }
 
